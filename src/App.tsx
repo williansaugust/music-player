@@ -111,7 +111,7 @@ export default function App() {
 
   const fetchAICover = async (title: string, artist: string) => {
     try {
-      const response = await fetch('http://localhost:3001/api/cover', {
+      const response = await fetch('/api/cover', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ title, artist })
@@ -224,7 +224,7 @@ export default function App() {
         let apiTracks: any[] = [];
 
         try {
-          const res = await fetch('http://localhost:3001/api/songs');
+          const res = await fetch('/api/songs');
           if (res.ok) {
             const data = await res.json();
             // Transform API format to match internal track structure
@@ -898,7 +898,7 @@ export default function App() {
         {/* Footer */}
         <div className="p-4 flex justify-center border-t border-white/5">
           <p className="micro-label text-[8px] text-white/20 tracking-[0.3em]">
-            Criado por <span className="text-accent/40 font-bold">Ivan Wangler</span>
+            Criado por <span className="text-accent/40 font-bold">Willians Augusto</span>
           </p>
         </div>
       </div>

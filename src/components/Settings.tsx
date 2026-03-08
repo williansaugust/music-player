@@ -130,7 +130,7 @@ export default function Settings({ accentColor, setAccentColor }: SettingsProps)
                             "Dedicated to the pursuit of pure, unadulterated sound. High Fidelity is not a preference, it's a standard."
                         </p>
                         <div className="h-px w-12 bg-accent/20 mx-auto my-6" />
-                        <p className="text-[10px] font-bold text-accent tracking-[0.1em]">Ivan Wangler Architecture</p>
+                        <p className="text-[10px] font-bold text-accent tracking-[0.1em]">Willians Augusto Architecture</p>
                     </div>
                 </section>
             </div>

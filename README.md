@@ -29,5 +29,5 @@ O aplicativo utiliza uma linguagem visual moderna baseada em:
 - **Áudio**: Web Audio API
 
 ---
-Criado com ❤️ por **Ivan Wangler**
-# ivan-wangler-player
+Criado com ❤️ por **Willians Augusto**
+# willians-augusto-player

@@ -66,6 +66,12 @@ app.post('/api/cover', async (req, res) => {
     }
 });
 
-app.listen(port, () => {
-    console.log(`Server is running on port ${port}`);
-});
+// Export for Vercel Serverless Functions
+export default app;
+
+// Only listen if running directly (local development)
+if (!process.env.VERCEL) {
+    app.listen(port, () => {
+        console.log(`Server is running on port ${port}`);
+    });
+}
