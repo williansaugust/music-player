@@ -370,11 +370,6 @@ export default function App() {
   const handleSelectTrack = (file: File | any, shouldPlay: boolean = true) => {
     if (!file) return;
 
-    // Determine if we're selecting the same source to allow restart
-    const isSameSource = (file instanceof File || (file.isFile && file && file.file)) 
-      ? false 
-      : file.file === audioSource;
-
     // CANCEL CROSSFADE if active
     if (isCrossfading) {
       setIsCrossfading(false);
@@ -383,7 +378,7 @@ export default function App() {
         crossfadeAudioRef.current.src = '';
       }
       if (audioRef.current) {
-        audioRef.current.volume = volume; // Restore volume
+        audioRef.current.volume = volume;
       }
     }
 
@@ -392,7 +387,11 @@ export default function App() {
       localStorage.setItem('lastPlayedTrackId', file.id.toString());
     }
 
-    const processFile = (fileToProcess: File, trackTitle: string, trackArtist: string) => {
+    /**
+     * processFile: given a File/Blob, create a blob URL, set as audio source,
+     * and attempt to read embedded ID3 tags via jsmediatags.
+     */
+    const processFile = (fileToProcess: File | Blob, trackTitle: string, trackArtist: string) => {
       try {
         const url = URL.createObjectURL(fileToProcess);
         setAudioSource(url);
@@ -411,17 +410,13 @@ export default function App() {
               setTrackInfo({
                 title: title || trackTitle,
                 artist: artist || trackArtist,
-                coverUrl: coverUrl,
+                coverUrl,
                 lyrics: (file as any).lyrics || ''
               });
-              if (coverUrl) {
-                extractDominantColor(coverUrl).then(setAccentColor);
-              } else {
-                setAccentColor('#EAB308');
-              }
+              if (coverUrl) extractDominantColor(coverUrl).then(setAccentColor);
+              else setAccentColor('#EAB308');
             },
-            onError: (error: any) => {
-              console.warn('Error reading tags:', error);
+            onError: () => {
               setTrackInfo({ title: trackTitle, artist: trackArtist, coverUrl: '', lyrics: (file as any).lyrics || '' });
             }
           });
@@ -430,69 +425,69 @@ export default function App() {
           fetchAICover(trackTitle, trackArtist);
         }
       } catch (err) {
-        console.error('Error processing file:', err);
+        console.error('processFile error:', err);
+        setTrackInfo({ title: trackTitle, artist: trackArtist, coverUrl: '', lyrics: '' });
       }
     };
 
+    const syncQueue = (trackObj: any) => {
+      const libIdx = libraryTracks.findIndex(t => t.id === trackObj.id);
+      if (libIdx !== -1) {
+        setQueue([...libraryTracks]);
+        setCurrentQueueIndex(libIdx);
+      } else {
+        setQueue([trackObj]);
+        setCurrentQueueIndex(0);
+      }
+      setRecentTracks(prev => [trackObj, ...prev.filter(t => t.id !== trackObj.id)].slice(0, 20));
+    };
+
     if (file instanceof File) {
-      const trackId = Date.now();
-      processFile(file, file.name.replace(/\.[^/.]+$/, ''), 'Local File');
-      const newTrack = { id: trackId, title: file.name.replace(/\.[^/.]+$/, ''), artist: 'Local File', isFile: true, file };
+      // ── Case 1: Raw File (uploaded directly via file input) ──────────────────
+      const trackTitle = file.name.replace(/\.[^/.]+$/, '');
+      processFile(file, trackTitle, 'Local File');
+      const newTrack = { id: Date.now(), title: trackTitle, artist: 'Local File', isFile: true, file };
       setQueue([newTrack]);
       setCurrentQueueIndex(0);
       setRecentTracks(prev => [newTrack, ...prev.filter(t => t.id !== newTrack.id)].slice(0, 20));
-      fetchAICover(newTrack.title, newTrack.artist);
-    } else {
-      // API track or stored local track
-      if (file.isFile && file.file) {
-        processFile(file.file, file.title, file.artist);
-      } else if (file.file) {
-        setAudioSource(file.file);
-        setTrackInfo({ title: file.title || 'Unknown', artist: file.artist || 'Unknown', coverUrl: file.coverUrl || '', lyrics: file.lyrics || '' });
-        setAccentColor('#EAB308');
-        if (!file.coverUrl) fetchAICover(file.title, file.artist);
-      } else {
-        // Fallback: If no file property, maybe it's title/artist only?
-        console.warn('Track has no direct "file" property:', file);
-        setTrackInfo({ title: file.title || 'Unknown', artist: file.artist || 'Unknown', coverUrl: file.coverUrl || '', lyrics: file.lyrics || '' });
-        // Don't set audioSource if we don't have it, but at least update info
-      }
 
-      // Sync queue if track not found
-      let idx = queue.findIndex(t => t.id === file.id);
-      if (idx === -1) {
-        const libIdx = libraryTracks.findIndex(t => t.id === file.id);
-        if (libIdx !== -1) {
-          setQueue([...libraryTracks]);
-          setCurrentQueueIndex(libIdx);
-        } else {
-          setQueue([file]);
-          setCurrentQueueIndex(0);
-        }
-      } else {
-        setCurrentQueueIndex(idx);
-      }
-      setRecentTracks(prev => [file, ...prev.filter(t => t.id !== file.id)].slice(0, 20));
+    } else if (file.isFile && (file.file instanceof File || file.file instanceof Blob)) {
+      // ── Case 2: Local track from IndexedDB (has File or Blob) ────────────────
+      processFile(file.file, file.title || 'Local Track', file.artist || 'Unknown');
+      syncQueue(file);
+
+    } else if (file.file && typeof file.file === 'string') {
+      // ── Case 3: API track (file.file is a URL string) ─────────────────────────
+      setAudioSource(file.file);
+      setTrackInfo({
+        title: file.title || 'Unknown',
+        artist: file.artist || 'Unknown',
+        coverUrl: file.coverUrl || '',
+        lyrics: file.lyrics || ''
+      });
+      setAccentColor('#EAB308');
+      if (!file.coverUrl) fetchAICover(file.title, file.artist);
+      syncQueue(file);
+
+    } else {
+      // ── Fallback: show info but can't play this track ─────────────────────────
+      console.warn('Track has no playable source:', file);
+      setTrackInfo({
+        title: file.title || 'Unknown',
+        artist: file.artist || 'Unknown',
+        coverUrl: file.coverUrl || '',
+        lyrics: file.lyrics || ''
+      });
     }
 
-    // Detect quality
+    // Quality badge detection
     const format = (file as any).format || (file instanceof File ? file.name.split('.').pop()?.toUpperCase() : '');
     const highRes = ['FLAC', 'WAV', 'ALAC', 'AIFF'].includes(format || '');
     setIsHiRes(highRes);
     setIs24Bit(highRes);
 
-    if (shouldPlay) {
-      setActiveTab('player');
-      setIsPlaying(true);
-      // Force reload if same source
-      if (isSameSource && audioRef.current) {
-        audioRef.current.currentTime = 0;
-        audioRef.current.play().catch(() => setIsPlaying(false));
-      }
-    } else {
-      // Even if not playing, we might want to switch to player to show info
-      setActiveTab('player');
-    }
+    setActiveTab('player');
+    if (shouldPlay) setIsPlaying(true);
   };
 
   const handleAddTracks = async (files: FileList | File[]) => {
