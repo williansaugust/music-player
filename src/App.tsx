@@ -309,7 +309,7 @@ export default function App() {
   // ─── Playback: react to audioSource change ────────────────────────────────
   useEffect(() => {
     if (!audioRef.current) return;
-    if (audioSource && !isCrossfading) {
+    if (audioSource) {
       // audioSource change already updates <audio src> via React render.
       // We need to call load() so the browser picks up the new src,
       // then play().
@@ -317,7 +317,7 @@ export default function App() {
       initAudioContext();
       if (audioCtxRef.current?.state === 'suspended') audioCtxRef.current.resume();
       audioRef.current.play().catch(() => setIsPlaying(false));
-    } else if (!isCrossfading) {
+    } else {
       audioRef.current.pause();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -367,14 +367,19 @@ export default function App() {
   const handleSelectTrack = (file: File | any, shouldPlay: boolean = true) => {
     // Determine if we're selecting the same source to allow restart
     const isSameSource = (file instanceof File || (file.isFile && file.file)) 
-      ? false // local files are harder to compare quickly by URL, but we can assume false for safety
+      ? false 
       : file.file === audioSource;
 
-    if (audioSource && audioSource.startsWith('blob:')) {
-      URL.revokeObjectURL(audioSource);
-    }
-    if (trackInfo.coverUrl && trackInfo.coverUrl.startsWith('blob:')) {
-      URL.revokeObjectURL(trackInfo.coverUrl);
+    // CANCEL CROSSFADE if active
+    if (isCrossfading) {
+      setIsCrossfading(false);
+      if (crossfadeAudioRef.current) {
+        crossfadeAudioRef.current.pause();
+        crossfadeAudioRef.current.src = '';
+      }
+      if (audioRef.current) {
+        audioRef.current.volume = volume; // Restore volume
+      }
     }
 
     // Save playing track to local storage
@@ -421,7 +426,7 @@ export default function App() {
     };
 
     if (file instanceof File) {
-      const trackId = Date.now(); // Create a stable ID for this session
+      const trackId = Date.now();
       processFile(file, file.name.replace(/\.[^/.]+$/, ''), 'Local File');
       const newTrack = { id: trackId, title: file.name.replace(/\.[^/.]+$/, ''), artist: 'Local File', isFile: true, file };
       setQueue([newTrack]);
@@ -447,7 +452,6 @@ export default function App() {
           setQueue([...libraryTracks]);
           setCurrentQueueIndex(libIdx);
         } else {
-          // If not in library either, just put it in a single-item queue
           setQueue([file]);
           setCurrentQueueIndex(0);
         }
@@ -463,7 +467,7 @@ export default function App() {
     setIsHiRes(highRes);
     setIs24Bit(highRes);
 
-    if (shouldPlay && !isCrossfading) {
+    if (shouldPlay) {
       setActiveTab('player');
       setIsPlaying(true);
       // Force reload if same source
@@ -471,7 +475,7 @@ export default function App() {
         audioRef.current.currentTime = 0;
         audioRef.current.play().catch(() => setIsPlaying(false));
       }
-    } else if (!isCrossfading) {
+    } else {
       setActiveTab('player');
     }
   };
