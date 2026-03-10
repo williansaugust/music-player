@@ -32,6 +32,7 @@
     "@types/express": "^5.0.6",
     "@types/jsmediatags": "^3.9.6",
     "@types/node": "^22.14.0",
+    "@vercel/node": "^5.6.15",
     "autoprefixer": "^10.4.21",
     "concurrently": "^9.2.1",
     "tailwindcss": "^4.1.14",
