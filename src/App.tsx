@@ -349,14 +349,14 @@ export default function App() {
   const handleAddToQueue = (file: File | any) => {
     const newTrack = file instanceof File
       ? { id: Date.now(), title: file.name.replace(/\.[^/.]+$/, ''), artist: 'Local File', isFile: true, file }
-      : { ...file, id: Date.now() };
+      : { ...file }; // Don't overwrite ID if it already exists
     setQueue([...queue, newTrack]);
   };
 
   const handlePlayNext = (file: File | any) => {
     const newTrack = file instanceof File
       ? { id: Date.now(), title: file.name.replace(/\.[^/.]+$/, ''), artist: 'Local File', isFile: true, file }
-      : { ...file, id: Date.now() };
+      : { ...file }; // Don't overwrite ID if it already exists
 
     const newQueue = [...queue];
     const insertIndex = currentQueueIndex + 1;
@@ -365,7 +365,14 @@ export default function App() {
   };
 
   const handleSelectTrack = (file: File | any, shouldPlay: boolean = true) => {
-    if (audioSource) URL.revokeObjectURL(audioSource);
+    // Determine if we're selecting the same source to allow restart
+    const isSameSource = (file instanceof File || (file.isFile && file.file)) 
+      ? false // local files are harder to compare quickly by URL, but we can assume false for safety
+      : file.file === audioSource;
+
+    if (audioSource && audioSource.startsWith('blob:')) {
+      URL.revokeObjectURL(audioSource);
+    }
     if (trackInfo.coverUrl && trackInfo.coverUrl.startsWith('blob:')) {
       URL.revokeObjectURL(trackInfo.coverUrl);
     }
@@ -394,7 +401,7 @@ export default function App() {
               title: title || trackTitle,
               artist: artist || trackArtist,
               coverUrl: coverUrl,
-              lyrics: fileToProcess.type === 'audio/unknown' ? '' : (file as any).lyrics || '' // default empty if local, wait for state map
+              lyrics: (file as any).lyrics || ''
             });
             if (coverUrl) {
               extractDominantColor(coverUrl).then(setAccentColor);
@@ -409,43 +416,45 @@ export default function App() {
         });
       } else {
         setTrackInfo({ title: trackTitle, artist: trackArtist, coverUrl: '', lyrics: (file as any).lyrics || '' });
-        // Fallback to AI Cover if not in history or similar
         fetchAICover(trackTitle, trackArtist);
       }
     };
 
     if (file instanceof File) {
+      const trackId = Date.now(); // Create a stable ID for this session
       processFile(file, file.name.replace(/\.[^/.]+$/, ''), 'Local File');
-      // If we just played a single file, make sure it's in a temporary queue context or similar
-      const newTrack = { id: Date.now(), title: file.name.replace(/\.[^/.]+$/, ''), artist: 'Local File', isFile: true, file };
+      const newTrack = { id: trackId, title: file.name.replace(/\.[^/.]+$/, ''), artist: 'Local File', isFile: true, file };
       setQueue([newTrack]);
       setCurrentQueueIndex(0);
       setRecentTracks(prev => [newTrack, ...prev.filter(t => t.id !== newTrack.id)].slice(0, 20));
       fetchAICover(newTrack.title, newTrack.artist);
-    } else if (file.isFile && file.file) {
-      processFile(file.file, file.title, file.artist);
+    } else {
+      // API track or stored local track
+      if (file.isFile && file.file) {
+        processFile(file.file, file.title, file.artist);
+      } else {
+        setAudioSource(file.file);
+        setTrackInfo({ title: file.title, artist: file.artist, coverUrl: file.coverUrl || '', lyrics: file.lyrics || '' });
+        setAccentColor('#EAB308');
+        if (!file.coverUrl) fetchAICover(file.title, file.artist);
+      }
 
+      // Sync queue if track not found
       let idx = queue.findIndex(t => t.id === file.id);
       if (idx === -1) {
-        // If playing from library and not in queue, sync library to queue
         const libIdx = libraryTracks.findIndex(t => t.id === file.id);
         if (libIdx !== -1) {
           setQueue([...libraryTracks]);
           setCurrentQueueIndex(libIdx);
+        } else {
+          // If not in library either, just put it in a single-item queue
+          setQueue([file]);
+          setCurrentQueueIndex(0);
         }
       } else {
         setCurrentQueueIndex(idx);
       }
       setRecentTracks(prev => [file, ...prev.filter(t => t.id !== file.id)].slice(0, 20));
-      if (!file.coverUrl) fetchAICover(file.title, file.artist);
-    } else {
-      // It's an API track with a URL string in the file property
-      setAudioSource(file.file);
-      setTrackInfo({ title: file.title, artist: file.artist, coverUrl: file.coverUrl || '', lyrics: file.lyrics || '' });
-      setAccentColor('#EAB308');
-      setCurrentQueueIndex(queue.findIndex(t => t.id === file.id));
-      setRecentTracks(prev => [file, ...prev.filter(t => t.id !== file.id)].slice(0, 20));
-      if (!file.coverUrl) fetchAICover(file.title, file.artist);
     }
 
     // Detect quality
@@ -454,12 +463,16 @@ export default function App() {
     setIsHiRes(highRes);
     setIs24Bit(highRes);
 
-    // If it's the initial load, we don't switch to player or auto-play
     if (shouldPlay && !isCrossfading) {
       setActiveTab('player');
       setIsPlaying(true);
+      // Force reload if same source
+      if (isSameSource && audioRef.current) {
+        audioRef.current.currentTime = 0;
+        audioRef.current.play().catch(() => setIsPlaying(false));
+      }
     } else if (!isCrossfading) {
-      setActiveTab('player'); // start on player, but don't play
+      setActiveTab('player');
     }
   };
 
@@ -484,9 +497,10 @@ export default function App() {
       const path = (file as any).webkitRelativePath || '';
       const folderName = path.split('/')[0] || 'Biblioteca';
       const baseName = file.name.replace(/\.[^/.]+$/, '');
+      const trackId = Math.random() + Date.now();
 
       return {
-        id: Math.random() + Date.now(),
+        id: trackId,
         title: baseName,
         artist: 'Local File',
         isFile: true,
