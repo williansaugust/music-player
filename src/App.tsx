@@ -451,6 +451,11 @@ export default function App() {
         setTrackInfo({ title: file.title || 'Unknown', artist: file.artist || 'Unknown', coverUrl: file.coverUrl || '', lyrics: file.lyrics || '' });
         setAccentColor('#EAB308');
         if (!file.coverUrl) fetchAICover(file.title, file.artist);
+      } else {
+        // Fallback: If no file property, maybe it's title/artist only?
+        console.warn('Track has no direct "file" property:', file);
+        setTrackInfo({ title: file.title || 'Unknown', artist: file.artist || 'Unknown', coverUrl: file.coverUrl || '', lyrics: file.lyrics || '' });
+        // Don't set audioSource if we don't have it, but at least update info
       }
 
       // Sync queue if track not found
@@ -484,6 +489,9 @@ export default function App() {
         audioRef.current.currentTime = 0;
         audioRef.current.play().catch(() => setIsPlaying(false));
       }
+    } else {
+      // Even if not playing, we might want to switch to player to show info
+      setActiveTab('player');
     }
   };
 
