@@ -311,12 +311,15 @@ export default function App() {
     if (!audioRef.current) return;
     if (audioSource) {
       // audioSource change already updates <audio src> via React render.
-      // We need to call load() so the browser picks up the new src,
-      // then play().
+      // We need to call load() so the browser picks up the new src.
       audioRef.current.load();
-      initAudioContext();
-      if (audioCtxRef.current?.state === 'suspended') audioCtxRef.current.resume();
-      audioRef.current.play().catch(() => setIsPlaying(false));
+      
+      // ONLY play if isPlaying is already true (triggered by handleSelectTrack)
+      if (isPlaying) {
+        initAudioContext();
+        if (audioCtxRef.current?.state === 'suspended') audioCtxRef.current.resume();
+        audioRef.current.play().catch(() => setIsPlaying(false));
+      }
     } else {
       audioRef.current.pause();
     }
@@ -365,8 +368,10 @@ export default function App() {
   };
 
   const handleSelectTrack = (file: File | any, shouldPlay: boolean = true) => {
+    if (!file) return;
+
     // Determine if we're selecting the same source to allow restart
-    const isSameSource = (file instanceof File || (file.isFile && file.file)) 
+    const isSameSource = (file instanceof File || (file.isFile && file && file.file)) 
       ? false 
       : file.file === audioSource;
 
@@ -383,45 +388,49 @@ export default function App() {
     }
 
     // Save playing track to local storage
-    if (file && file.id) {
+    if (file.id) {
       localStorage.setItem('lastPlayedTrackId', file.id.toString());
     }
 
     const processFile = (fileToProcess: File, trackTitle: string, trackArtist: string) => {
-      const url = URL.createObjectURL(fileToProcess);
-      setAudioSource(url);
-      const jsmediatags = (window as any).jsmediatags;
-      if (jsmediatags) {
-        jsmediatags.read(fileToProcess, {
-          onSuccess: (tag: any) => {
-            const { title, artist, picture } = tag.tags;
-            let coverUrl = '';
-            if (picture) {
-              const { data, format } = picture;
-              const uint8Array = new Uint8Array(data);
-              const blob = new Blob([uint8Array], { type: format });
-              coverUrl = URL.createObjectURL(blob);
+      try {
+        const url = URL.createObjectURL(fileToProcess);
+        setAudioSource(url);
+        const jsmediatags = (window as any).jsmediatags;
+        if (jsmediatags) {
+          jsmediatags.read(fileToProcess, {
+            onSuccess: (tag: any) => {
+              const { title, artist, picture } = tag.tags;
+              let coverUrl = '';
+              if (picture) {
+                const { data, format } = picture;
+                const uint8Array = new Uint8Array(data);
+                const blob = new Blob([uint8Array], { type: format });
+                coverUrl = URL.createObjectURL(blob);
+              }
+              setTrackInfo({
+                title: title || trackTitle,
+                artist: artist || trackArtist,
+                coverUrl: coverUrl,
+                lyrics: (file as any).lyrics || ''
+              });
+              if (coverUrl) {
+                extractDominantColor(coverUrl).then(setAccentColor);
+              } else {
+                setAccentColor('#EAB308');
+              }
+            },
+            onError: (error: any) => {
+              console.warn('Error reading tags:', error);
+              setTrackInfo({ title: trackTitle, artist: trackArtist, coverUrl: '', lyrics: (file as any).lyrics || '' });
             }
-            setTrackInfo({
-              title: title || trackTitle,
-              artist: artist || trackArtist,
-              coverUrl: coverUrl,
-              lyrics: (file as any).lyrics || ''
-            });
-            if (coverUrl) {
-              extractDominantColor(coverUrl).then(setAccentColor);
-            } else {
-              setAccentColor('#EAB308');
-            }
-          },
-          onError: (error: any) => {
-            console.warn('Error reading tags:', error);
-            setTrackInfo({ title: trackTitle, artist: trackArtist, coverUrl: '', lyrics: (file as any).lyrics || '' });
-          }
-        });
-      } else {
-        setTrackInfo({ title: trackTitle, artist: trackArtist, coverUrl: '', lyrics: (file as any).lyrics || '' });
-        fetchAICover(trackTitle, trackArtist);
+          });
+        } else {
+          setTrackInfo({ title: trackTitle, artist: trackArtist, coverUrl: '', lyrics: (file as any).lyrics || '' });
+          fetchAICover(trackTitle, trackArtist);
+        }
+      } catch (err) {
+        console.error('Error processing file:', err);
       }
     };
 
@@ -437,9 +446,9 @@ export default function App() {
       // API track or stored local track
       if (file.isFile && file.file) {
         processFile(file.file, file.title, file.artist);
-      } else {
+      } else if (file.file) {
         setAudioSource(file.file);
-        setTrackInfo({ title: file.title, artist: file.artist, coverUrl: file.coverUrl || '', lyrics: file.lyrics || '' });
+        setTrackInfo({ title: file.title || 'Unknown', artist: file.artist || 'Unknown', coverUrl: file.coverUrl || '', lyrics: file.lyrics || '' });
         setAccentColor('#EAB308');
         if (!file.coverUrl) fetchAICover(file.title, file.artist);
       }
@@ -475,8 +484,6 @@ export default function App() {
         audioRef.current.currentTime = 0;
         audioRef.current.play().catch(() => setIsPlaying(false));
       }
-    } else {
-      setActiveTab('player');
     }
   };
 
@@ -638,7 +645,13 @@ export default function App() {
           const processCrossfadeFile = (f: File) => URL.createObjectURL(f);
 
           let nextUrl = '';
-          if (nextFile instanceof File) nextUrl = processCrossfadeFile(nextFile);
+          if (nextFile instanceof File) {
+            nextUrl = processCrossfadeFile(nextFile);
+          } else if (typeof nextFile === 'string') {
+            nextUrl = nextFile;
+          } else if (nextFile && (nextFile as any).file) {
+            nextUrl = typeof (nextFile as any).file === 'string' ? (nextFile as any).file : URL.createObjectURL((nextFile as any).file);
+          }
 
           if (nextUrl) {
             crossfadeAudioRef.current.src = nextUrl;
