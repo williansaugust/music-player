@@ -88,6 +88,7 @@ export default function App() {
   const audioRef = useRef<HTMLAudioElement>(null);
   const crossfadeAudioRef = useRef<HTMLAudioElement>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
+  const prevBlobUrlRef = useRef<string | null>(null); // tracks previous blob URL for safe revocation
 
   const [isCrossfading, setIsCrossfading] = useState(false);
 
@@ -310,28 +311,34 @@ export default function App() {
   useEffect(() => {
     if (!audioRef.current) return;
     if (audioSource) {
-      // audioSource change already updates <audio src> via React render.
-      // We need to call load() so the browser picks up the new src.
-      audioRef.current.load();
-      
-      // ONLY play if isPlaying is already true (triggered by handleSelectTrack)
-      if (isPlaying) {
-        initAudioContext();
-        if (audioCtxRef.current?.state === 'suspended') audioCtxRef.current.resume();
-        audioRef.current.play().catch(() => setIsPlaying(false));
+      // Safely revoke the PREVIOUS blob URL only after src has changed
+      const prevUrl = prevBlobUrlRef.current;
+      if (prevUrl && prevUrl.startsWith('blob:') && prevUrl !== audioSource) {
+        // Delay revocation so the browser can fully release it
+        setTimeout(() => URL.revokeObjectURL(prevUrl), 5000);
       }
+      prevBlobUrlRef.current = audioSource.startsWith('blob:') ? audioSource : null;
+
+      audioRef.current.load();
+      // isPlaying is always true here because handleSelectTrack sets it before this fires
+      initAudioContext();
+      if (audioCtxRef.current?.state === 'suspended') audioCtxRef.current.resume();
+      audioRef.current.play().catch(() => setIsPlaying(false));
     } else {
       audioRef.current.pause();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [audioSource]);
 
-  // ─── Playback: react to isPlaying toggle ──────────────────────────────────
+  // ─── Playback: react to isPlaying toggle (pause/resume only, no src change) ──
   useEffect(() => {
     if (!audioRef.current || !audioSource) return;
     if (isPlaying) {
       if (audioCtxRef.current?.state === 'suspended') audioCtxRef.current.resume();
-      audioRef.current.play().catch(() => setIsPlaying(false));
+      // If audio is already playing (e.g., triggered by audioSource effect), don't double-play
+      if (audioRef.current.paused) {
+        audioRef.current.play().catch(() => setIsPlaying(false));
+      }
     } else {
       audioRef.current.pause();
     }
@@ -342,11 +349,6 @@ export default function App() {
   useEffect(() => {
     if (audioRef.current && !isCrossfading) audioRef.current.volume = volume;
   }, [volume, isCrossfading]);
-
-  // ─── Cleanup blob URL on change ───────────────────────────────────────────
-  useEffect(() => {
-    return () => { if (audioSource) URL.revokeObjectURL(audioSource); };
-  }, [audioSource]);
 
   // ─── Track selection ─────────────────────────────────────────────────────
   const handleAddToQueue = (file: File | any) => {
