@@ -88,7 +88,8 @@ export default function App() {
   const audioRef = useRef<HTMLAudioElement>(null);
   const crossfadeAudioRef = useRef<HTMLAudioElement>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
-  const prevBlobUrlRef = useRef<string | null>(null); // tracks previous blob URL for safe revocation
+  const prevBlobUrlRef = useRef<string | null>(null);
+  const pendingPlayRef = useRef<boolean>(false); // whether play() should be called after src loads
 
   const [isCrossfading, setIsCrossfading] = useState(false);
 
@@ -307,40 +308,47 @@ export default function App() {
     }
   }, [trackInfo, audioSource]); // Hook relies on track info natively so OS notifications update
 
-  // ─── Playback: react to audioSource change ────────────────────────────────
-  useEffect(() => {
-    if (!audioRef.current) return;
-    if (audioSource) {
-      // Safely revoke the PREVIOUS blob URL only after src has changed
-      const prevUrl = prevBlobUrlRef.current;
-      if (prevUrl && prevUrl.startsWith('blob:') && prevUrl !== audioSource) {
-        // Delay revocation so the browser can fully release it
-        setTimeout(() => URL.revokeObjectURL(prevUrl), 5000);
-      }
-      prevBlobUrlRef.current = audioSource.startsWith('blob:') ? audioSource : null;
+  /**
+   * playTrack: imperatively sets a new audio source and starts playback.
+   * This avoids stale-closure issues of reactive useEffects.
+   */
+  const playTrack = (src: string, shouldPlay: boolean) => {
+    const audio = audioRef.current;
+    if (!audio) return;
 
-      audioRef.current.load();
-      // isPlaying is always true here because handleSelectTrack sets it before this fires
-      initAudioContext();
-      if (audioCtxRef.current?.state === 'suspended') audioCtxRef.current.resume();
-      audioRef.current.play().catch(() => setIsPlaying(false));
-    } else {
-      audioRef.current.pause();
+    // Revoke previous blob URL after a delay
+    const prev = prevBlobUrlRef.current;
+    if (prev && prev.startsWith('blob:') && prev !== src) {
+      setTimeout(() => URL.revokeObjectURL(prev), 8000);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [audioSource]);
+    if (src.startsWith('blob:')) prevBlobUrlRef.current = src;
+    else prevBlobUrlRef.current = null;
 
-  // ─── Playback: react to isPlaying toggle (pause/resume only, no src change) ──
+    // Set new source
+    audio.src = src;
+    setAudioSource(src); // keep React state in sync for <audio> and effects
+
+    if (shouldPlay) {
+      setIsPlaying(true);
+      audio.load();
+      pendingPlayRef.current = true; // will be picked up by onCanPlay
+    } else {
+      audio.load();
+      pendingPlayRef.current = false;
+    }
+  };
+
+  // ─── Playback: pause/resume on isPlaying toggle ────────────────────────────
   useEffect(() => {
-    if (!audioRef.current || !audioSource) return;
+    const audio = audioRef.current;
+    if (!audio || !audioSource) return;
     if (isPlaying) {
       if (audioCtxRef.current?.state === 'suspended') audioCtxRef.current.resume();
-      // If audio is already playing (e.g., triggered by audioSource effect), don't double-play
-      if (audioRef.current.paused) {
-        audioRef.current.play().catch(() => setIsPlaying(false));
+      if (audio.paused && !pendingPlayRef.current) {
+        audio.play().catch(() => setIsPlaying(false));
       }
     } else {
-      audioRef.current.pause();
+      audio.pause();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isPlaying]);
@@ -396,7 +404,7 @@ export default function App() {
     const processFile = (fileToProcess: File | Blob, trackTitle: string, trackArtist: string) => {
       try {
         const url = URL.createObjectURL(fileToProcess);
-        setAudioSource(url);
+        playTrack(url, shouldPlay); // ← imperative: load + conditionally play
         const jsmediatags = (window as any).jsmediatags;
         if (jsmediatags) {
           jsmediatags.read(fileToProcess, {
@@ -460,7 +468,7 @@ export default function App() {
 
     } else if (file.file && typeof file.file === 'string') {
       // ── Case 3: API track (file.file is a URL string) ─────────────────────────
-      setAudioSource(file.file);
+      playTrack(file.file, shouldPlay); // ← imperative
       setTrackInfo({
         title: file.title || 'Unknown',
         artist: file.artist || 'Unknown',
@@ -489,7 +497,8 @@ export default function App() {
     setIs24Bit(highRes);
 
     setActiveTab('player');
-    if (shouldPlay) setIsPlaying(true);
+    // Note: setIsPlaying is handled inside playTrack() for Cases 1-3.
+    // We do NOT call setIsPlaying(true) here to avoid double-triggering the [isPlaying] effect.
   };
 
   const handleAddTracks = async (files: FileList | File[]) => {
@@ -711,6 +720,15 @@ export default function App() {
       <audio
         ref={audioRef}
         src={audioSource || undefined}
+        onCanPlay={() => {
+          if (pendingPlayRef.current && audioRef.current) {
+            pendingPlayRef.current = false;
+            initAudioContext();
+            if (audioCtxRef.current?.state === 'suspended') audioCtxRef.current.resume();
+            audioRef.current.volume = volume;
+            audioRef.current.play().catch(() => setIsPlaying(false));
+          }
+        }}
         onTimeUpdate={() => {/* handled in Player via ref */ }}
         onEnded={handleTrackEnded}
         style={{ display: 'none' }}
